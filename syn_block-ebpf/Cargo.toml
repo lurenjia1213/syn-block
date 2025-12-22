@@ -1,0 +1,17 @@
+[package]
+name = "syn_block-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+syn_block-common = { path = "../syn_block-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "syn_block"
+path = "src/main.rs"
