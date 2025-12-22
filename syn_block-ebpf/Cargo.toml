@@ -8,6 +8,7 @@ syn_block-common = { path = "../syn_block-common" }
 
 aya-ebpf = { workspace = true }
 aya-log-ebpf = { workspace = true }
+network-types = "0.1.0"
 
 [build-dependencies]
 which = { workspace = true }
@@ -15,3 +16,8 @@ which = { workspace = true }
 [[bin]]
 name = "syn_block"
 path = "src/main.rs"
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+use anyhow::anyhow;
 use aya::programs::{Xdp, XdpFlags};
 use clap::Parser;
 #[rustfmt::skip]
@@ -15,7 +15,8 @@ struct Opt {
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
 
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "warn")).init();
+    warn!("starting syn_block eBPF program loader");
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -36,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
         env!("OUT_DIR"),
         "/syn_block"
     )))?;
+    warn!("rust eBPF program loaded");
     match aya_log::EbpfLogger::init(&mut ebpf) {
         Err(e) => {
             // This can happen if you remove all log statements from your eBPF program.
@@ -53,11 +55,64 @@ async fn main() -> anyhow::Result<()> {
             });
         }
     }
+
+    // read ports file and populate PORTS map and CONFIG
+    let ports_file = std::env::var("PORTS_FILE").unwrap_or_else(|_| "./ports".to_string());
+    let window_secs: u64 = std::env::var("WINDOW_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10);
+    let threshold: u64 = std::env::var("THRESHOLD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
+    let block_secs: u64 = std::env::var("BLOCK_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(60);
+
+    // populate PORTS map
+    if let Ok(contents) = std::fs::read_to_string(&ports_file) {
+        let map_ref = ebpf
+            .map_mut("PORTS")
+            .ok_or_else(|| anyhow!("map PORTS not found"))?;
+        let mut ports_map = aya::maps::HashMap::<_, u16, u8>::try_from(map_ref)?;
+        for line in contents.lines() {
+            let s = line.trim();
+            if s.is_empty() {
+                continue;
+            }
+            if let Ok(p) = s.parse::<u16>() {
+                let key = p as u16;
+                let val: u8 = 1;
+                let _ = ports_map.insert(&key, &val, 0);
+            }
+        }
+    }
+
+    // set config values
+    let cfg_ref = ebpf
+        .map_mut("CONFIG")
+        .ok_or_else(|| anyhow!("map CONFIG not found"))?;
+    let mut cfg = aya::maps::HashMap::<_, u32, u64>::try_from(cfg_ref)?;
+    let _ = cfg.insert(&0u32, &(window_secs * 1_000_000_000u64), 0);
+    let _ = cfg.insert(&1u32, &threshold, 0);
+    let _ = cfg.insert(&2u32, &(block_secs * 1_000_000_000u64), 0);
+
     let Opt { iface } = opt;
     let program: &mut Xdp = ebpf.program_mut("syn_block").unwrap().try_into()?;
     program.load()?;
-    program.attach(&iface, XdpFlags::default())
-        .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+    // Try default XDP mode first, fall back to SKB mode if it fails
+    if let Err(e) = program.attach(&iface, XdpFlags::default()) {
+        warn!("failed to attach the XDP program with default flags: {e}. Trying SKB_MODE...");
+        if let Err(e2) = program.attach(&iface, XdpFlags::SKB_MODE) {
+            return Err(anyhow!(
+                "failed to attach the XDP program with default flags ({e}) and SKB_MODE ({e2})"
+            ));
+        } else {
+            warn!("attached the XDP program using SKB_MODE");
+        }
+    }
 
     let ctrl_c = signal::ctrl_c();
     println!("Waiting for Ctrl-C...");
