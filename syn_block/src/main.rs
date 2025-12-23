@@ -131,14 +131,14 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // set config values
+    // set config values (Array map: indexes 0=window ns, 1=threshold, 2=block ns)
     let cfg_ref = ebpf
         .map_mut("CONFIG")
         .ok_or_else(|| anyhow!("map CONFIG not found"))?;
-    let mut cfg = aya::maps::HashMap::<_, u32, u64>::try_from(cfg_ref)?;
-    let _ = cfg.insert(&0u32, &(window_secs * 1_000_000_000u64), 0);
-    let _ = cfg.insert(&1u32, &threshold, 0);
-    let _ = cfg.insert(&2u32, &(block_secs * 1_000_000_000u64), 0);
+    let mut cfg = aya::maps::Array::<_, u64>::try_from(cfg_ref)?;
+    let _ = cfg.set(0u32, &(window_secs * 1_000_000_000u64), 0);
+    let _ = cfg.set(1u32, &threshold, 0);
+    let _ = cfg.set(2u32, &(block_secs * 1_000_000_000u64), 0);
 
     let program: &mut Xdp = ebpf.program_mut("syn_block").unwrap().try_into()?;
     program.load()?;

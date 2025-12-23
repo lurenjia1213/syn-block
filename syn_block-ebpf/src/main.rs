@@ -8,7 +8,7 @@ use aya_ebpf::{
     bindings::xdp_action,
     helpers,
     macros::{map, xdp},
-    maps::{HashMap, LruHashMap},
+    maps::{Array, HashMap, LruHashMap},
     programs::XdpContext,
 };
 use aya_log_ebpf::{debug, info, warn};
@@ -37,7 +37,7 @@ static mut COUNTERS: LruHashMap<u32, SynCounter> =
 static mut BLOCKED: LruHashMap<u32, u64> = LruHashMap::<u32, u64>::with_max_entries(1024, 0);
 
 #[map(name = "CONFIG")]
-static mut CONFIG: HashMap<u32, u64> = HashMap::<u32, u64>::with_max_entries(4, 0);
+static mut CONFIG: Array<u64> = Array::<u64>::with_max_entries(4, 0);
 
 const KEY_WINDOW_NS: u32 = 0; // window seconds in ns stored as u64
 const KEY_THRESHOLD: u32 = 1; // threshold stored as u64
@@ -76,14 +76,6 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
 
     let ipv4hdr: *const Ipv4Hdr = ptr_at(&ctx, EthHdr::LEN)?;
 
-    let source_port = match unsafe { (*ipv4hdr).proto } {
-        IpProto::Tcp => {
-            let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
-            u16::from_be_bytes(unsafe { (*tcphdr).source })
-        }
-        _ => return Ok(xdp_action::XDP_PASS),
-    };
-    let source_addr = u32::from_be_bytes(unsafe { (*ipv4hdr).src_addr });
     let dest_port = match unsafe { (*ipv4hdr).proto } {
         IpProto::Tcp => {
             let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
@@ -97,9 +89,14 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
         }
         _ => return Ok(xdp_action::XDP_PASS),
     };
-
-    //我们只处理ssh，即tcp
-    //过多的syn即视为攻击
+    let source_port = match unsafe { (*ipv4hdr).proto } {
+        IpProto::Tcp => {
+            let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
+            u16::from_be_bytes(unsafe { (*tcphdr).source })
+        }
+        _ => return Ok(xdp_action::XDP_PASS),
+    };
+    let source_addr = u32::from_be_bytes(unsafe { (*ipv4hdr).src_addr });
 
     let src_ip_bytes = parse_ipv4(source_addr);
     info!(
@@ -132,15 +129,15 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
     ); //u32
     // Get config values (if absent, use defaults)
     let now = unsafe { helpers::bpf_ktime_get_ns() } as u64;
-    let window_ns = match unsafe { CONFIG.get(&KEY_WINDOW_NS) } {
+    let window_ns = match unsafe { CONFIG.get(KEY_WINDOW_NS) } {
         Some(v) => *v,
         None => 10u64 * 1_000_000_000u64,
     };
-    let threshold = match unsafe { CONFIG.get(&KEY_THRESHOLD) } {
+    let threshold = match unsafe { CONFIG.get(KEY_THRESHOLD) } {
         Some(v) => *v as u32,
         None => 3u32,
     };
-    let block_ns = match unsafe { CONFIG.get(&KEY_BLOCK_NS) } {
+    let block_ns = match unsafe { CONFIG.get(KEY_BLOCK_NS) } {
         Some(v) => *v,
         None => 60u64 * 1_000_000_000u64,
     };
