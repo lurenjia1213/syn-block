@@ -88,7 +88,7 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
         IpProto::Tcp => {
             let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
             unsafe {
-                if (*tcphdr).syn() != 1 {
+                if (*tcphdr).syn() != 1 || (*tcphdr).ack() == 1 {
                     debug!(&ctx, "not syn packet, xdp pass");
                     return Ok(xdp_action::XDP_PASS);
                 }

@@ -1,3 +1,16 @@
+tested:
+6.17.10-x64v3-xanmod1   with virtio-net XDP
+6.12.48+deb13-amd64   with  virtio-net XDP tencent cloud
+
+6.6.87.2-microsoft-standard-WSL   hv_netvsc 
+
+高负载测试
+包含复杂流量
+6.12.57+deb13-amd64  virtio-net SKB_MODE Aliyun
+6.17.2-2-pve with ixgbe X540-AT2
+6.17.2-2-pve with igb I350
+
+
 # syn_block
 
 ## Prerequisites
