@@ -16,8 +16,4 @@ which = { workspace = true }
 [[bin]]
 name = "syn_block"
 path = "src/main.rs"
-[profile.dev]
-panic = "abort"
 
-[profile.release]
-panic = "abort"

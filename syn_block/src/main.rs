@@ -2,8 +2,11 @@ use anyhow::anyhow;
 use aya::programs::{Xdp, XdpFlags};
 use clap::Parser;
 #[rustfmt::skip]
-use log::{debug, warn};
+
 use tokio::signal;
+
+#[allow(unused)]
+use log::{debug, error, info, warn};
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -42,8 +45,14 @@ async fn main() -> anyhow::Result<()> {
         block_secs: cli_block_secs,
     } = opt;
 
-    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "warn")).init();
-    warn!("starting syn_block eBPF program loader");
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "off")).init();
+    let pid = std::process::id();
+    info!(
+        "starting syn_block eBPF program loader; iface={} pid={} version={}",
+        iface,
+        pid,
+        env!("CARGO_PKG_VERSION")
+    );
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -53,7 +62,10 @@ async fn main() -> anyhow::Result<()> {
     };
     let ret = unsafe { libc::setrlimit(libc::RLIMIT_MEMLOCK, &rlim) };
     if ret != 0 {
-        debug!("remove limit on locked memory failed, ret is: {ret}");
+        debug!(
+            "remove limit on locked memory failed: {}",
+            std::io::Error::last_os_error()
+        );
     }
 
     // This will include your eBPF object file as raw bytes at compile-time and load it at
@@ -64,11 +76,11 @@ async fn main() -> anyhow::Result<()> {
         env!("OUT_DIR"),
         "/syn_block"
     )))?;
-    warn!("rust eBPF program loaded");
+    info!("rust eBPF program loaded");
     match aya_log::EbpfLogger::init(&mut ebpf) {
         Err(e) => {
             // This can happen if you remove all log statements from your eBPF program.
-            warn!("failed to initialize eBPF logger: {e}");
+            error!("failed to initialize eBPF logger: {e}");
         }
         Ok(logger) => {
             let mut logger =
@@ -111,11 +123,14 @@ async fn main() -> anyhow::Result<()> {
         .map_mut("PORTS")
         .ok_or_else(|| anyhow!("map PORTS not found"))?;
     let mut ports_map = aya::maps::HashMap::<_, u16, u8>::try_from(map_ref)?;
+    let mut ports_loaded = 0u32;
     if !ports.is_empty() {
         for p in &ports {
             let key = *p as u16;
             let val: u8 = 1;
-            let _ = ports_map.insert(&key, &val, 0);
+            if ports_map.insert(&key, &val, 0).is_ok() {
+                ports_loaded += 1;
+            }
         }
     } else if let Ok(contents) = std::fs::read_to_string(&ports_file) {
         for line in contents.lines() {
@@ -126,9 +141,25 @@ async fn main() -> anyhow::Result<()> {
             if let Ok(p) = s.parse::<u16>() {
                 let key = p as u16;
                 let val: u8 = 1;
-                let _ = ports_map.insert(&key, &val, 0);
+                if ports_map.insert(&key, &val, 0).is_ok() {
+                    ports_loaded += 1;
+                }
             }
         }
+    }
+    info!(
+        "loaded {} monitored ports from {}",
+        ports_loaded, &ports_file
+    );
+    if !ports.is_empty() {
+        info!("monitoring ports (CLI): {:?}", ports);
+    } else {
+        info!("monitoring ports (file): {}", ports_file);
+    }
+    if ports_loaded == 0 {
+        error!(
+            "no monitored ports loaded; no port is being monitored. Use --ports or set PORTS_FILE."
+        );
     }
 
     // set config values (Array map: indexes 0=window ns, 1=threshold, 2=block ns)
@@ -139,25 +170,34 @@ async fn main() -> anyhow::Result<()> {
     let _ = cfg.set(0u32, &(window_secs * 1_000_000_000u64), 0);
     let _ = cfg.set(1u32, &threshold, 0);
     let _ = cfg.set(2u32, &(block_secs * 1_000_000_000u64), 0);
+    info!(
+        "CONFIG set: window_secs={}s threshold={} block_secs={}s",
+        window_secs, threshold, block_secs
+    );
 
     let program: &mut Xdp = ebpf.program_mut("syn_block").unwrap().try_into()?;
     program.load()?;
     // Try default XDP mode first, fall back to SKB mode if it fails
     if let Err(e) = program.attach(&iface, XdpFlags::default()) {
-        warn!("failed to attach the XDP program with default flags: {e}. Trying SKB_MODE...");
+        error!("failed to attach the XDP program with default flags: {e}. Trying SKB_MODE...");
         if let Err(e2) = program.attach(&iface, XdpFlags::SKB_MODE) {
             return Err(anyhow!(
                 "failed to attach the XDP program with default flags ({e}) and SKB_MODE ({e2})"
             ));
         } else {
-            warn!("attached the XDP program using SKB_MODE");
+            info!("attached the XDP program using SKB_MODE on iface {}", iface);
         }
+    } else {
+        info!(
+            "attached the XDP program using default XDP flags on iface {}",
+            iface
+        );
     }
 
     let ctrl_c = signal::ctrl_c();
-    println!("Waiting for Ctrl-C...");
+    info!("Waiting for Ctrl-C...");
     ctrl_c.await?;
-    println!("Exiting...");
+    info!("Exiting...");
 
     Ok(())
 }

@@ -11,7 +11,7 @@ use aya_ebpf::{
     maps::{Array, HashMap, LruHashMap},
     programs::XdpContext,
 };
-use aya_log_ebpf::{debug, info, warn};
+use aya_log_ebpf::{debug, error, info};
 use network_types::{
     eth::{EthHdr, EtherType},
     ip::{IpProto, Ipv4Hdr},
@@ -99,7 +99,23 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
     let source_addr = u32::from_be_bytes(unsafe { (*ipv4hdr).src_addr });
 
     let src_ip_bytes = parse_ipv4(source_addr);
-    info!(
+
+    // Get config values early for logging/decisions
+    let now = unsafe { helpers::bpf_ktime_get_ns() } as u64;
+    let window_ns = match unsafe { CONFIG.get(KEY_WINDOW_NS) } {
+        Some(v) => *v,
+        None => 10u64 * 1_000_000_000u64,
+    };
+    let threshold = match unsafe { CONFIG.get(KEY_THRESHOLD) } {
+        Some(v) => *v as u32,
+        None => 3u32,
+    };
+    let block_ns = match unsafe { CONFIG.get(KEY_BLOCK_NS) } {
+        Some(v) => *v,
+        None => 60u64 * 1_000_000_000u64,
+    };
+
+    debug!(
         &ctx,
         "dest_port {}  src_port {} syn packet from src_ip:{}.{}.{}.{}",
         dest_port,
@@ -118,41 +134,31 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
         return Ok(xdp_action::XDP_PASS);
     }
 
-    warn!(
+    info!(
         &ctx,
-        "monitored port {} syn packet from src_ip:{}.{}.{}.{}",
+        "monitored port {} syn packet from src_ip:{}.{}.{}.{} (window={}s threshold={})",
         dest_port,
         src_ip_bytes[0],
         src_ip_bytes[1],
         src_ip_bytes[2],
-        src_ip_bytes[3]
+        src_ip_bytes[3],
+        window_ns / 1_000_000_000u64,
+        threshold
     ); //u32
-    // Get config values (if absent, use defaults)
-    let now = unsafe { helpers::bpf_ktime_get_ns() } as u64;
-    let window_ns = match unsafe { CONFIG.get(KEY_WINDOW_NS) } {
-        Some(v) => *v,
-        None => 10u64 * 1_000_000_000u64,
-    };
-    let threshold = match unsafe { CONFIG.get(KEY_THRESHOLD) } {
-        Some(v) => *v as u32,
-        None => 3u32,
-    };
-    let block_ns = match unsafe { CONFIG.get(KEY_BLOCK_NS) } {
-        Some(v) => *v,
-        None => 60u64 * 1_000_000_000u64,
-    };
+    // config values already read above
 
     // If blocked and block not expired -> DROP
     if let Some(expire) = unsafe { BLOCKED.get(&source_addr) } {
         if *expire > now {
-            warn!(
+            error!(
                 &ctx,
-                "port {},ip {}.{}.{}.{} still blocked,xdp drop",
+                "port {},ip {}.{}.{}.{} still blocked, xdp drop (expires in {}s)",
                 dest_port,
                 src_ip_bytes[0],
                 src_ip_bytes[1],
                 src_ip_bytes[2],
-                src_ip_bytes[3]
+                src_ip_bytes[3],
+                (*expire - now) / 1_000_000_000u64
             );
             return Ok(xdp_action::XDP_DROP);
         } else {
@@ -173,12 +179,26 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
             cnt.count = 1;
             cnt.last_ts = now;
         }
+        if cnt.count >= threshold.saturating_sub(1) {
+            info!(
+                &ctx,
+                "src_ip:{}.{}.{}.{} count={} threshold={} (window={}s)",
+                src_ip_bytes[0],
+                src_ip_bytes[1],
+                src_ip_bytes[2],
+                src_ip_bytes[3],
+                cnt.count,
+                threshold,
+                window_ns / 1_000_000_000u64
+            );
+        }
         if cnt.count > threshold {
             // block
+            let trigger_count = cnt.count;
             let expire = now + block_ns;
             unsafe {
                 if BLOCKED.insert(&source_addr, &expire, 0).is_err() {
-                    warn!(
+                    error!(
                         &ctx,
                         "failed to insert into BLOCKED for src_ip:{}.{}.{}.{}",
                         src_ip_bytes[0],
@@ -196,7 +216,7 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
             };
             unsafe {
                 if COUNTERS.insert(&source_addr, &reset, 0).is_err() {
-                    warn!(
+                    error!(
                         &ctx,
                         "failed to reset COUNTERS for src_ip:{}.{}.{}.{}",
                         src_ip_bytes[0],
@@ -206,21 +226,24 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
                     );
                 }
             }
-            warn!(
+            error!(
                 &ctx,
-                "port {},ip {}.{}.{}.{} blocked,xdp drop",
+                "port {},ip {}.{}.{}.{} blocked: count={} threshold={} duration={}s, xdp drop",
                 dest_port,
                 src_ip_bytes[0],
                 src_ip_bytes[1],
                 src_ip_bytes[2],
-                src_ip_bytes[3]
+                src_ip_bytes[3],
+                trigger_count,
+                threshold,
+                block_ns / 1_000_000_000u64
             );
             return Ok(xdp_action::XDP_DROP);
         } else {
             // update counter
             unsafe {
                 if COUNTERS.insert(&source_addr, &cnt, 0).is_err() {
-                    warn!(
+                    error!(
                         &ctx,
                         "failed to update COUNTERS for src_ip:{}.{}.{}.{}",
                         src_ip_bytes[0],
@@ -240,7 +263,7 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
         };
         unsafe {
             if COUNTERS.insert(&source_addr, &nc, 0).is_err() {
-                warn!(
+                error!(
                     &ctx,
                     "failed to insert new COUNTERS for src_ip:{}.{}.{}.{}",
                     src_ip_bytes[0],
@@ -252,7 +275,7 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
         }
     }
 
-    warn!(
+    debug!(
         &ctx,
         "finish,src_ip:{}.{}.{}.{} port:{}",
         src_ip_bytes[0],
