@@ -147,10 +147,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     }
-    info!(
-        "loaded {} monitored ports from {}",
-        ports_loaded, &ports_file
-    );
+
     if !ports.is_empty() {
         info!("monitoring ports (CLI): {:?}", ports);
     } else {
