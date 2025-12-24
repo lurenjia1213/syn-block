@@ -89,7 +89,7 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
         IpProto::Tcp => {
             let tcphdr: *const TcpHdr = ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN)?;
             unsafe {
-                if (*tcphdr).syn() != 1 || (*tcphdr).ack() == 1 {
+                if likely((*tcphdr).syn() != 1 || (*tcphdr).ack() == 1) {
                     debug!(&ctx, "not tcp syn packet, xdp pass");
                     return Ok(xdp_action::XDP_PASS);
                 }
@@ -105,10 +105,9 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
 
     let src_ip_bytes = parse_ipv4(source_addr);
 
-    // Get config values early for logging/decisions
     let now = unsafe { helpers::bpf_ktime_get_ns() } as u64;
 
-    //来自用户态，可以保证
+    //Originating from user space, it can guarantees these values exist
     let window_ns = unsafe { CONFIG.get(KEY_WINDOW_NS).copied().unwrap_unchecked() };
     let threshold = unsafe { CONFIG.get(KEY_THRESHOLD).copied().unwrap_unchecked() };
     let block_ns = unsafe { CONFIG.get(KEY_BLOCK_NS).copied().unwrap_unchecked() };
@@ -233,7 +232,8 @@ fn try_syn_block(ctx: XdpContext) -> Result<u32, ()> {
                 _pad: 0,
             };
             unsafe {
-                if unlikely(COUNTERS.insert(&source_addr, &nc, 0).is_err()) {
+                let status = COUNTERS.insert(&source_addr, &nc, 0).is_err();
+                if unlikely(status) {
                     error!(
                         &ctx,
                         "failed to insert new COUNTERS for src_ip:{}.{}.{}.{}",
@@ -267,4 +267,4 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 
 #[unsafe(link_section = "license")]
 #[unsafe(no_mangle)]
-static LICENSE: [u8; 13] = *b"Dual MIT/GPL\0";
+static LICENSE: [u8; 4] = *b"GPL\0";

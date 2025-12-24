@@ -12,6 +12,11 @@ use log::{debug, error, info, warn};
 struct Opt {
     #[clap(short = 'i', long = "iface", default_value = "eth0")]
     iface: String,
+
+    /// XDP attach mode: skb, drv, hw (default: skb)
+    #[clap(short = 'm', long = "mode", value_parser = ["skb", "drv", "hw"], default_value = "skb")]
+    mode: String,
+
     /// Comma-separated list of ports, e.g. 22,80,6666
     #[clap(short = 'p', long = "ports", value_delimiter = ',')]
     ports: Vec<u16>,
@@ -38,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
     let Opt {
         iface,
+        mode,
         ports,
         ports_file,
         window_secs: cli_window_secs,
@@ -174,20 +180,23 @@ async fn main() -> anyhow::Result<()> {
 
     let program: &mut Xdp = ebpf.program_mut("syn_block").unwrap().try_into()?;
     program.load()?;
-    // Try default XDP mode first, fall back to SKB mode if it fails
-    if let Err(e) = program.attach(&iface, XdpFlags::default()) {
-        error!("failed to attach the XDP program with default flags: {e}. Trying SKB_MODE...");
-        if let Err(e2) = program.attach(&iface, XdpFlags::SKB_MODE) {
-            return Err(anyhow!(
-                "failed to attach the XDP program with default flags ({e}) and SKB_MODE ({e2})"
-            ));
-        } else {
-            info!("attached the XDP program using SKB_MODE on iface {}", iface);
-        }
+    // Attach using user-selected mode
+    let flags = match mode.as_str() {
+        "skb" => XdpFlags::SKB_MODE,
+        "drv" => XdpFlags::DRV_MODE,
+        "hw" => XdpFlags::HW_MODE,
+        _ => XdpFlags::SKB_MODE,
+    };
+    if let Err(e) = program.attach(&iface, flags) {
+        return Err(anyhow!(
+            "failed to attach the XDP program with mode '{}' on iface {}: {e}",
+            mode,
+            iface
+        ));
     } else {
         info!(
-            "attached the XDP program using default XDP flags on iface {}",
-            iface
+            "attached the XDP program using mode '{}' on iface {}",
+            mode, iface
         );
     }
 
