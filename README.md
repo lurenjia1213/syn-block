@@ -1,70 +1,107 @@
-tested:
-6.17.10-x64v3-xanmod1   with virtio-net XDP
-6.12.48+deb13-amd64   with  virtio-net XDP tencent cloud
+# syn\_block
 
-6.6.87.2-microsoft-standard-WSL   hv_netvsc 
+基于 eBPF/XDP 的流量过滤工具，专为 frps 服务器设计，用于缓解 SYN Flood 攻击并防止内网穿透服务的 IP 误封。
 
-高负载测试
-包含复杂流量
-6.12.57+deb13-amd64  virtio-net SKB_MODE Aliyun
-6.17.2-2-pve with ixgbe X540-AT2
-6.17.2-2-pve with igb I350
+## ⚠️ 警告 (Disclaimer)
 
+​**本程序目前处于实验阶段**，可能存在 Bug。请务必小心使用，谨慎用于生产环境。
 
-# syn_block
+> 本人这一年都会很忙
 
-## Prerequisites
+> 所有代码均为GPL，请遵循许可协议
 
-1. stable rust toolchains: `rustup toolchain install stable`
-1. nightly rust toolchains: `rustup toolchain install nightly --component rust-src`
-1. (if cross-compiling) rustup target: `rustup target add ${ARCH}-unknown-linux-musl`
-1. (if cross-compiling) LLVM: (e.g.) `brew install llvm` (on macOS)
-1. (if cross-compiling) C toolchain: (e.g.) [`brew install filosottile/musl-cross/musl-cross`](https://github.com/FiloSottile/homebrew-musl-cross) (on macOS)
-1. bpf-linker: `cargo install bpf-linker` (`--no-default-features` on macOS)
+## 📖 项目简介
 
-## Build & Run
+本程序旨在运行于 frps（服务端）机器上，通过 eBPF 技术在网卡驱动层（XDP）或通用层（SKB）过滤部分恶意攻击流量。
 
-Use `cargo build`, `cargo check`, etc. as normal. Run your program with:
+### 🎯 设计初衷与背景
 
-```shell
+在使用阿里云等云服务器作为 frps 节点进行内网穿透和 SSH 转发时，经常面临以下痛点：
+
+1. ​**SSHD 限制**：被转发的目标机器（内网机器）上的 SSHD 服务往往不支持（或无法配置）通过 Proxy Protocol 获取真实客户端 IP。
+2. ​**IP 混淆**：在 frp 隧道下，所有流量的源 IP 在目标机器看来都是 frpc 节点的 IP
+3. ​**误封禁**：当 frps 遭遇公网扫描或 SYN Flood 攻击并转发给内网时，内网机器的 SSHD 会检测到大量来自 frpc 的失败尝试，从而通过 Fail2Ban 等机制将 frpc 的 IP 拉黑，导致正常服务中断。
+
+​**本程序的作用**：在 frps 服务器入口处直接识别并阻断恶意攻击流量，避免这些流量进入 frp 转发链路，从而保护后端 SSHD 不触发封禁机制。
+
+## 🚀 用法说明 (Usage)
+
+### 运行参数
+
+```
+cargo run --release -- \
+  --iface <网卡名> \
+  --ports <端口列表> \
+  --window-secs <统计窗口秒数> \
+  --threshold <阻断阈值> \
+  --block-secs <阻断时长>
+
+```
+
+### 参数详解
+
+|**参数**|**说明**|**示例**|
+| ------| --------------------------------| ------|
+|​`--iface`|指定监听的网卡接口名称|​`eth0`|
+|​`--ports`|需要监控的端口列表（逗号分隔）|​`22,80,443`|
+|​`--window-secs`|流量统计的时间窗口（秒）|​`5`|
+|​`--threshold`|触发阻断的连接数阈值|​`100`|
+|​`--block-secs`|阻断生效的时长（秒）|​`60`|
+
+### 日志控制
+
+通过环境变量 `RUST_LOG` 控制日志级别：
+
+- 可选等级：`off`​, `error`​, `warn`​, `info`​, `debug`​, `trace`
+
+示例：
+
+```
+RUST_LOG=info cargo run --release -- ...
+
+```
+
+退出程序：使用 `Ctrl + C`。
+
+## 🧪 测试环境 (Tested Environments)
+
+本项目已在以下内核和环境中进行测试：
+
+- **Linux (VirtIO / XDP):**
+
+  - ​`6.17.10-x64v3-xanmod1` (virtio-net XDP)
+  - ​`6.12.48+deb13-amd64` (Tencent Cloud, virtio-net XDP)
+- **Linux (VirtIO / SKB Mode):**
+
+  - ​`6.12.57+deb13-amd64`​ (Aliyun, virtio-net SKB\_MODE) - *注：该环境攻击流量极多*
+- **WSL (Windows Subsystem for Linux):**
+
+  - ​`6.6.87.2-microsoft-standard-WSL`​ (hv\_netvsc)
+- **Physical Hardware (Proxmox VE):**
+
+  - ​`6.17.2-2-pve`​ with **ixgbe X540-AT2** (60Mbps 流量测试，用于检测性能瓶颈)
+  - ​`6.17.2-2-pve`​ with **igb I350** (700Mbps 流量测试，用于检测性能瓶颈)
+
+## 🛠️ 构建与开发 (Build & Development)
+
+### 前置要求 (Prerequisites)
+
+1. ​**Rust Toolchain (Stable)** ​: `rustup toolchain install stable`
+2. ​**Rust Toolchain (Nightly)** ​: `rustup toolchain install nightly --component rust-src`
+3. ​**bpf-linker**​: `cargo install bpf-linker`​ (macOS 上需加 `--no-default-features`)
+4.  **(Cross-compile)**  Target: `rustup target add ${ARCH}-unknown-linux-musl`
+5.  **(Cross-compile)**  LLVM: e.g., `brew install llvm` (macOS)
+6.  **(Cross-compile)**  C Toolchain: e.g., `brew install filosottile/musl-cross/musl-cross` (macOS)
+
+### 编译与运行 (Build & Run)
+
+使用标准 cargo 命令即可，构建脚本会自动处理 eBPF 程序：
+
+```
+cargo build
+cargo check
+cargo build --release
 cargo run --release
+
 ```
 
-Cargo build scripts are used to automatically build the eBPF correctly and include it in the
-program.
-
-## Cross-compiling on macOS
-
-Cross compilation should work on both Intel and Apple Silicon Macs.
-
-```shell
-CC=${ARCH}-linux-musl-gcc cargo build --package syn_block --release \
-  --target=${ARCH}-unknown-linux-musl \
-  --config=target.${ARCH}-unknown-linux-musl.linker=\"${ARCH}-linux-musl-gcc\"
-```
-The cross-compiled program `target/${ARCH}-unknown-linux-musl/release/syn_block` can be
-copied to a Linux server or VM and run there.
-
-## License
-
-With the exception of eBPF code, syn_block is distributed under the terms
-of either the [MIT license] or the [Apache License] (version 2.0), at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
-be dual licensed as above, without any additional terms or conditions.
-
-### eBPF
-
-All eBPF code is distributed under either the terms of the
-[GNU General Public License, Version 2] or the [MIT license], at your
-option.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in this project by you, as defined in the GPL-2 license, shall be
-dual licensed as above, without any additional terms or conditions.
-
-[Apache license]: LICENSE-APACHE
-[MIT license]: LICENSE-MIT
-[GNU General Public License, Version 2]: LICENSE-GPL2
