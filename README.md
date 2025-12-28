@@ -12,7 +12,7 @@
 
 ## 📖 项目简介
 
-本程序旨在运行于 frps（服务端）机器上，通过 eBPF 技术在网卡驱动层（XDP）或通用层（SKB）过滤部分恶意攻击流量。
+本程序旨在运行于 frps（服务端）机器上，通过 eBPF XDP技术过滤部分恶意攻击流量。
 
 ### 🎯 设计初衷与背景
 
@@ -79,8 +79,8 @@ RUST_LOG=info cargo run --release -- ...
   - ​`6.6.87.2-microsoft-standard-WSL`​ (hv\_netvsc)
 - **Physical Hardware (Proxmox VE):**
 
-  - ​`6.17.2-2-pve`​ with **ixgbe X540-AT2** (60Mbps 流量测试，用于检测性能瓶颈)
-  - ​`6.17.2-2-pve`​ with **igb I350** (700Mbps 流量测试，用于检测性能瓶颈)
+  - ​`6.17.2-2-pve`​ with **ixgbe X540-AT2** 
+  - ​`6.17.2-2-pve`​ with **igb I350** 
 
 ## 🛠️ 构建与开发 (Build & Development)
 
