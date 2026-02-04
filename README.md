@@ -35,6 +35,7 @@ cargo run --release -- \
   --window-secs <统计窗口秒数> \
   --threshold <阻断阈值> \
   --block-secs <阻断时长>
+  --rst                  # 当丢包时发送 TCP RST 以更快终止连接（可选）
 
 ```
 
@@ -73,14 +74,15 @@ RUST_LOG=info cargo run --release -- ...
   - ​`6.12.48+deb13-amd64` (Tencent Cloud, virtio-net XDP)
 - **Linux (VirtIO / SKB Mode):**
 
-  - ​`6.12.57+deb13-amd64`​ (Aliyun, virtio-net SKB\_MODE) - *注：该环境攻击流量极多*
+  - ​`6.12.57+deb13-amd64`​ (Aliyun, virtio-net SKB\_MODE) - *注：主要运行环境*
 - **WSL (Windows Subsystem for Linux):**
 
   - ​`6.6.87.2-microsoft-standard-WSL`​ (hv\_netvsc)
 - **Physical Hardware (Proxmox VE):**
 
-  - ​`6.17.2-2-pve`​ with **ixgbe X540-AT2** 
-  - ​`6.17.2-2-pve`​ with **igb I350** 
+  - ​`6.17.2-2-pve`​  **ixgbe X540-AT2** 
+  - ​`6.17.2-2-pve`​  **igb I350** 
+  - `6.1.118-rk35xx-ophub` **rk3566 st_gmac (drv/skb)** 
 
 ## 🛠️ 构建与开发 (Build & Development)
 

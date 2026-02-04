@@ -36,6 +36,10 @@ struct Opt {
     /// Block duration in seconds (overrides BLOCK_SECS)
     #[clap(short = 'b', long = "block-secs")]
     block_secs: Option<u64>,
+
+    /// Send TCP RST when dropping (useful to terminate attackers quickly)
+    #[clap(long = "rst", action)]
+    rst: bool,
 }
 
 #[tokio::main]
@@ -49,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
         window_secs: cli_window_secs,
         threshold: cli_threshold,
         block_secs: cli_block_secs,
+        rst: cli_rst,
     } = opt;
 
     env_logger::Builder::from_env(env_logger::Env::default().filter_or("RUST_LOG", "off")).init();
@@ -173,9 +178,12 @@ async fn main() -> anyhow::Result<()> {
     let _ = cfg.set(0u32, &(window_secs * 1_000_000_000u64), 0);
     let _ = cfg.set(1u32, &threshold, 0);
     let _ = cfg.set(2u32, &(block_secs * 1_000_000_000u64), 0);
+    // index 3: rst flag (0 = disabled, 1 = enabled)
+    let rst_val: u64 = if cli_rst { 1 } else { 0 };
+    let _ = cfg.set(3u32, &rst_val, 0);
     info!(
-        "CONFIG set: window_secs={}s threshold={} block_secs={}s",
-        window_secs, threshold, block_secs
+        "CONFIG set: window_secs={}s threshold={} block_secs={}s rst={}",
+        window_secs, threshold, block_secs, rst_val
     );
 
     let program: &mut Xdp = ebpf.program_mut("syn_block").unwrap().try_into()?;

@@ -7,8 +7,13 @@ edition.workspace = true
 syn_block-common = { path = "../syn_block-common" }
 
 aya-ebpf = { workspace = true }
-aya-log-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true, optional = true }
 network-types = "0.1.0"
+
+[features]
+ebpf-log = ["aya-log-ebpf"]
+
+#default=["ebpf-log"]
 
 [build-dependencies]
 which = { workspace = true }
