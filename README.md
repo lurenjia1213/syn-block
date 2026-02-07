@@ -48,6 +48,15 @@ cargo run --release -- \
 |​`--window-secs`|流量统计的时间窗口（秒）|​`5`|
 |​`--threshold`|触发阻断的连接数阈值|​`100`|
 |​`--block-secs`|阻断生效的时长（秒）|​`60`|
+|​`--rst`|加上此参数时发送rst，而非丢包|
+
+#### 我咋用的
+```
+除了被保护端口外，我还额外监控了几个我不会使用的端口
+当这些端口被扫描，则会拉黑源ip 6分钟
+对被拉黑的ip，发送rst，假装端口未开放
+```
+
 
 ### 日志控制
 
@@ -63,26 +72,6 @@ RUST_LOG=info cargo run --release -- ...
 ```
 
 退出程序：使用 `Ctrl + C`。
-
-## 🧪 测试环境 (Tested Environments)
-
-本项目已在以下内核和环境中进行测试：
-
-- **Linux (VirtIO / XDP):**
-
-  - ​`6.17.10-x64v3-xanmod1` (virtio-net XDP)
-  - ​`6.12.48+deb13-amd64` (Tencent Cloud, virtio-net XDP)
-- **Linux (VirtIO / SKB Mode):**
-
-  - ​`6.12.57+deb13-amd64`​ (Aliyun, virtio-net SKB\_MODE) - *注：主要运行环境*
-- **WSL (Windows Subsystem for Linux):**
-
-  - ​`6.6.87.2-microsoft-standard-WSL`​ (hv\_netvsc)
-- **Physical Hardware (Proxmox VE):**
-
-  - ​`6.17.2-2-pve`​  **ixgbe X540-AT2** 
-  - ​`6.17.2-2-pve`​  **igb I350** 
-  - `6.1.118-rk35xx-ophub` **rk3566 st_gmac (drv/skb)** 
 
 ## 🛠️ 构建与开发 (Build & Development)
 
